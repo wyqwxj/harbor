@@ -16,39 +16,20 @@
 package dao
 
 import (
+	"fmt"
 	"net"
 
-	"github.com/vmware/harbor/utils/log"
-
 	"os"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/astaxie/beego/orm"
 	_ "github.com/go-sql-driver/mysql" //register mysql driver
+	"github.com/vmware/harbor/utils/log"
 )
 
 // NonExistUserID : if a user does not exist, the ID of the user will be 0.
 const NonExistUserID = 0
-
-func isIllegalLength(s string, min int, max int) bool {
-	if min == -1 {
-		return (len(s) > max)
-	}
-	if max == -1 {
-		return (len(s) <= min)
-	}
-	return (len(s) < min || len(s) > max)
-}
-
-func isContainIllegalChar(s string, illegalChar []string) bool {
-	for _, c := range illegalChar {
-		if strings.Index(s, c) >= 0 {
-			return true
-		}
-	}
-	return false
-}
 
 // GenerateRandomString generates a random string
 func GenerateRandomString() (string, error) {
@@ -64,6 +45,7 @@ func GenerateRandomString() (string, error) {
 
 //InitDB initializes the database
 func InitDB() {
+	// orm.Debug = true
 	orm.RegisterDriver("mysql", orm.DRMySQL)
 	addr := os.Getenv("MYSQL_HOST")
 	port := os.Getenv("MYSQL_PORT")
@@ -96,4 +78,19 @@ func InitDB() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+var globalOrm orm.Ormer
+var once sync.Once
+
+// GetOrmer :set ormer singleton
+func GetOrmer() orm.Ormer {
+	once.Do(func() {
+		globalOrm = orm.NewOrm()
+	})
+	return globalOrm
+}
+
+func paginateForRawSQL(sql string, limit, offset int64) string {
+	return fmt.Sprintf("%s limit %d offset %d", sql, limit, offset)
 }

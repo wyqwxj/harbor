@@ -25,7 +25,7 @@ import (
 // GetUserProjectRoles returns roles that the user has according to the project.
 func GetUserProjectRoles(userID int, projectID int64) ([]models.Role, error) {
 
-	o := orm.NewOrm()
+	o := GetOrmer()
 
 	sql := `select *
 		from role
@@ -72,4 +72,22 @@ func IsAdminRole(userIDOrUsername interface{}) (bool, error) {
 	}
 
 	return user.HasAdminRole == 1, nil
+}
+
+// GetRoleByID ...
+func GetRoleByID(id int) (*models.Role, error) {
+	o := GetOrmer()
+
+	sql := `select *
+		from role
+		where role_id = ?`
+
+	var role models.Role
+	if err := o.Raw(sql, id).QueryRow(&role); err != nil {
+		if err == orm.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &role, nil
 }

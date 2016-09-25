@@ -22,7 +22,7 @@ import (
 
 	"github.com/vmware/harbor/dao"
 	"github.com/vmware/harbor/models"
-	svc_utils "github.com/vmware/harbor/service/utils"
+	"github.com/vmware/harbor/service/cache"
 	"github.com/vmware/harbor/utils"
 	"github.com/vmware/harbor/utils/log"
 )
@@ -38,18 +38,37 @@ type searchResult struct {
 }
 
 // Get ...
-func (n *SearchAPI) Get() {
-	userID, ok := n.GetSession("userId").(int)
+func (s *SearchAPI) Get() {
+	userID, _, ok := s.GetUserIDForRequest()
 	if !ok {
 		userID = dao.NonExistUserID
 	}
-	keyword := n.GetString("q")
-	projects, err := dao.QueryRelevantProjects(userID)
+
+	keyword := s.GetString("q")
+
+	isSysAdmin, err := dao.IsAdminRole(userID)
 	if err != nil {
-		log.Errorf("Failed to get projects of user id: %d, error: %v", userID, err)
-		n.CustomAbort(http.StatusInternalServerError, "Failed to get project search result")
+		log.Errorf("failed to check whether the user %d is system admin: %v", userID, err)
+		s.CustomAbort(http.StatusInternalServerError, "internal error")
 	}
-	projectSorter := &utils.ProjectSorter{Projects: projects}
+
+	var projects []models.Project
+
+	if isSysAdmin {
+		projects, err = dao.GetProjects("")
+		if err != nil {
+			log.Errorf("failed to get all projects: %v", err)
+			s.CustomAbort(http.StatusInternalServerError, "internal error")
+		}
+	} else {
+		projects, err = dao.SearchProjects(userID)
+		if err != nil {
+			log.Errorf("failed to get user %d 's relevant projects: %v", userID, err)
+			s.CustomAbort(http.StatusInternalServerError, "internal error")
+		}
+	}
+
+	projectSorter := &models.ProjectSorter{Projects: projects}
 	sort.Sort(projectSorter)
 	projectResult := []map[string]interface{}{}
 	for _, p := range projects {
@@ -66,34 +85,36 @@ func (n *SearchAPI) Get() {
 		}
 	}
 
-	repositories, err2 := svc_utils.GetRepoFromCache()
-	if err2 != nil {
-		log.Errorf("Failed to get repos from cache, error: %v", err2)
-		n.CustomAbort(http.StatusInternalServerError, "Failed to get repositories search result")
+	repositories, err := cache.GetRepoFromCache()
+	if err != nil {
+		log.Errorf("failed to list repositories: %v", err)
+		s.CustomAbort(http.StatusInternalServerError, "")
 	}
+
 	sort.Strings(repositories)
 	repositoryResult := filterRepositories(repositories, projects, keyword)
 	result := &searchResult{Project: projectResult, Repository: repositoryResult}
-	n.Data["json"] = result
-	n.ServeJSON()
+	s.Data["json"] = result
+	s.ServeJSON()
 }
 
 func filterRepositories(repositories []string, projects []models.Project, keyword string) []map[string]interface{} {
-	var i, j int = 0, 0
+	i, j := 0, 0
 	result := []map[string]interface{}{}
 	for i < len(repositories) && j < len(projects) {
-		r := &utils.Repository{Name: repositories[i]}
-		d := strings.Compare(r.GetProject(), projects[j].Name)
+		r := repositories[i]
+		p, _ := utils.ParseRepository(r)
+		d := strings.Compare(p, projects[j].Name)
 		if d < 0 {
 			i++
 			continue
 		} else if d == 0 {
 			i++
-			if len(keyword) != 0 && !strings.Contains(r.Name, keyword) {
+			if len(keyword) != 0 && !strings.Contains(r, keyword) {
 				continue
 			}
 			entry := make(map[string]interface{})
-			entry["repository_name"] = r.Name
+			entry["repository_name"] = r
 			entry["project_name"] = projects[j].Name
 			entry["project_id"] = projects[j].ProjectID
 			entry["project_public"] = projects[j].Public
